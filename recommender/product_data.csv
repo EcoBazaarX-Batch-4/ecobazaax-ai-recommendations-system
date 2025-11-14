@@ -1,0 +1,21 @@
+id,name,category,material,size,type,carbon_emission,durability_score,price,description,brand
+1,EcoBag,Shopping Bag,Jute,Small,eco,0.8,8,180,Reusable jute shopping bag,GreenEarth
+2,Plastic Bag,Shopping Bag,Plastic,Small,non-eco,1.8,2,5,Single-use plastic shopping bag,Generic
+3,EcoBag,Shopping Bag,Jute,Large,eco,1.0,8,220,Large-sized reusable jute bag,GreenEarth
+4,Plastic Bag,Shopping Bag,Plastic,Large,non-eco,2.2,2,8,Large single-use plastic shopping bag,Generic
+5,Bamboo Brush,Hygiene,Bamboo,Medium,eco,0.5,7,80,Toothbrush made from bamboo,EarthCare
+6,Plastic Brush,Hygiene,Plastic,Medium,non-eco,1.5,3,40,Standard plastic toothbrush,Generic
+7,Metal Straw,Kitchen,Stainless Steel,Medium,eco,0.8,9,100,Reusable stainless steel straw,GreenSip
+8,Plastic Straw,Kitchen,Plastic,Medium,non-eco,1.9,1,5,Disposable plastic straw,Generic
+9,Cloth Bag,Shopping Bag,Cotton,Medium,eco,1.0,9,200,Reusable cotton bag for groceries,ReLeaf
+10,Paper Bag,Shopping Bag,Paper,Medium,non-eco,1.3,2,10,Disposable paper grocery bag,Generic
+11,Steel Bottle,Drinkware,Stainless Steel,Medium,eco,2.0,10,450,Reusable stainless steel water bottle,HydroMate
+12,Plastic Bottle,Drinkware,Plastic,Medium,non-eco,1.5,2,60,Disposable plastic water bottle,Generic
+13,Glass Bottle,Drinkware,Glass,Medium,eco,1.8,8,300,Reusable glass bottle,HydroMate
+14,Aluminum Can,Drinkware,Aluminum,Small,non-eco,2.4,1,30,Single-use aluminum drink can,Generic
+15,EcoCup,Drinkware,Steel,Small,eco,1.2,10,250,Reusable steel coffee cup,EcoSip
+16,Paper Cup,Drinkware,Paper,Small,non-eco,1.8,1,10,Disposable paper cup,Generic
+17,Bamboo Comb,Hygiene,Bamboo,Small,eco,0.4,9,90,Comb made from natural bamboo,EarthCare
+18,Plastic Comb,Hygiene,Plastic,Small,non-eco,1.2,3,30,Regular plastic comb,Generic
+19,EcoPlate,Kitchen,Areca Leaf,Medium,eco,0.6,8,120,Biodegradable areca leaf plate,Leafware
+20,Plastic Plate,Kitchen,Plastic,Medium,non-eco,1.8,1,15,Single-use plastic plate,Generic

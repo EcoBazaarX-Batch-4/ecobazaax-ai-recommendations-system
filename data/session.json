@@ -1,0 +1,26 @@
+{
+    "user_carts": {
+        "guest_user": []
+    },
+    "session_memory": {
+        "cart_items": 0,
+        "last_intent": null,
+        "last_order": {
+            "order_id": "ORD9035",
+            "items": [
+                "Bamboo Brush"
+            ],
+            "total": 68,
+            "payment": "Upi",
+            "status": "Cancelled",
+            "source_city": "Bhubaneswar",
+            "destination_city": "Bhubaneswar",
+            "delivery_zone": "Intra-City"
+        },
+        "user_name": "Anoksha",
+        "selected_payment": "upi",
+        "delivery_city": "Bhubaneswar",
+        "pending_total": 68,
+        "coupon_applied": "SAVE15"
+    }
+}

@@ -1,0 +1,19 @@
+{
+  "intents": [
+    {
+      "tag": "greeting",
+      "patterns": ["hi", "hello", "hey"],
+      "responses": ["Hello! How can I assist you with eco-friendly shopping today?"]
+    },
+    {
+      "tag": "carbon_footprint",
+      "patterns": ["what is carbon footprint", "tell me about carbon footprint"],
+      "responses": ["Carbon footprint refers to the total greenhouse gases produced by human activities."]
+    },
+    {
+      "tag": "cart_count",
+      "patterns": ["how many products are in my cart", "cart items", "what's in my cart"],
+      "responses": []
+    }
+  ]
+}
