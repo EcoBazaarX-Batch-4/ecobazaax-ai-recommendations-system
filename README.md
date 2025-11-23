@@ -2,46 +2,58 @@ EcoBazaar X – Chatbot & Recommendation System (Python + Flask + Backend API In
 Overview
 
 The EcoBazaar X Chatbot is a fully API-driven conversational assistant built using Python, Flask, and a lightweight NLP + fuzzy-matching system.
-It connects directly with the EcoBazaar X Spring Boot Backend (http://localhost:9091
-) to perform real e-commerce operations such as:
+It connects directly with the EcoBazaar X Spring Boot Backend (http://localhost:9091) to perform real e-commerce operations such as:
 
 Cart operations (add, remove, show, clear)
-
 Checkout and order creation
-
 Order tracking & cancellation
-
 Product search via backend
-
 Eco-friendly recommendations
-
 Fuzzy matching for user-friendly interaction
 
 This service functions as an independent microservice and will integrate into the React front-end as a chatbot widget.
 
 Technology Stack
-Backend Chatbot Microservice
 
+Core Technologies:
 Python 3.10+
+Flask — REST microservice framework
+Flask-CORS — Enables cross-origin requests (Frontend → Chatbot API)
+Requests — For calling backend REST APIs (Spring Boot)
+RapidFuzz — Fuzzy matching for NLP-based item detection
+Pandas — Used in the recommendation engine (eco-product similarity model)
 
-Flask (API framework)
+Chatbot Microservice:
+A fully API-driven Python Flask service that:
+Detects user intent
+Calls backend microservices
+Performs cart operations (add, show, remove, clear)
+Handles checkout, order tracking, cancellation
+Provides eco-friendly recommendations
 
-Flask-CORS (Cross-origin access)
+Recommendation System:
+Lightweight similarity engine (using Pandas)
+Works on product dataset (CSV)
+Provides:
+Eco-friendly alternatives
+Product comparisons
+Carbon footprint insights
+Interconnected Architecture
 
-Requests (HTTP client for backend APIs)
+Chatbot microservice works as a bridge between:
 
-RapidFuzz (fuzzy matching)
+Spring Boot Backend (http://localhost:9091)
+Handles real business logic:
+Auth (JWT)
+Products
+Cart
+Checkout
+Orders
 
-Pandas (for eco-recommendation engine)
-
-Recommender System (custom ML-lite similarity engine)
-
-Interconnected System
-
-Spring Boot Backend API (http://localhost:9091
-)
-
-React Frontend (for actual chatbot UI)
+React Frontend
+Displays the chatbot UI
+Sends user messages + JWT token
+Renders chatbot replies
 
 Folder Structure
 EcoChatBot/
@@ -62,39 +74,25 @@ EcoChatBot/
 └── README.md                     # Project documentation
 
 Backend API Endpoints Connected by Chatbot
+
 Public Endpoints
-
 GET /api/v1/products/search
-
 GET /api/v1/products/{id}
-
 POST /api/v1/auth/login
-
 Customer Endpoints
-
 GET /api/v1/cart
-
 POST /api/v1/cart/add
-
 DELETE /api/v1/cart/remove/{id}
-
 POST /api/v1/checkout
-
 GET /api/v1/profile/orders
-
 POST /api/v1/profile/orders/{id}/cancel
-
 The chatbot relies entirely on backend APIs—no local DB or file storage.
 
 Key Features
 1. Authentication & JWT Handling
-
 JWT passed from frontend → chatbot → backend
-
 Chatbot does NOT handle login UI
-
 Frontend sends:
-
 {
   "message": "show my cart",
   "user_id": "customer1",
@@ -102,54 +100,34 @@ Frontend sends:
 }
 
 2. Intelligent Cart System
-
 Add items by name or fuzzy names
-
 Remove specific items via fuzzy matching
-
 View cart summary
-
 Auto-suggest related products
-
 Clear entire cart
 
 3. Order Management
-
 Checkout
-
 Apply coupon (mocked)
-
 Confirm order
-
 Track latest order
-
 Cancel order
 
 4. NLP + Intent Detection
-
 Recognizes 20+ natural-language patterns:
-
 “add book to cart”
-
 “show my cart”
-
 “checkout”
-
 “cancel my order”
-
 “recommend eco-friendly products”
 
 5. Eco Recommendation Engine
-
 A CSV-powered recommender supporting:
-
 Similar product recommendations
-
 Carbon emission insights
-
 Comparison queries
 
-Running the Application
+Running the Application:
 Step 1 — Install dependencies
 pip install -r requirements.txt
 
@@ -161,7 +139,6 @@ python app.py
 
 
 Chatbot server runs at:
-
 http://127.0.0.1:5000/chat
 
 Chatbot API Usage
@@ -180,19 +157,6 @@ Response Example
   "reply": "Atomic Habits added to your cart for ₹499 x 1! You might also like Reusable Bag 🌱",
   "status": "success"
 }
-
-
-Technologies Used
-
-Python (Flask) — REST microservice
-
-Flask-CORS — cross-origin requests
-
-Requests — backend API calling
-
-RapidFuzz — fuzzy matching
-
-Pandas — recommendation engine
 
 Recommender System — ML-lite product matching
 
