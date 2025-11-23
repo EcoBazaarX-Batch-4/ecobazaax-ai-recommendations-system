@@ -1,6 +1,9 @@
 flask
 flask-cors
-pandas
+requests
 rapidfuzz
-scikit-learn
+pandas
 numpy
+scikit-learn
+python-dotenv
+mysql-connector-python

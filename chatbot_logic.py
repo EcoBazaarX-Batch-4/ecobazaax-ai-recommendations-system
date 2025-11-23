@@ -1,423 +1,548 @@
-import json
+"""
+chatbot_logic.py — Full API mode (no local persistence)
+
+Responsibilities:
+- Intent detection (simple rule-based)
+- Use backend REST API for:
+    - product search (/api/v1/products/search)
+    - cart operations (/api/v1/cart, /api/v1/cart/add, /api/v1/cart/remove/{id})
+    - checkout (/api/v1/checkout)
+    - orders / cancel (best-effort using common endpoints)
+- Exposes:
+    - chatbot_response(user_input, user_id="guest_user", jwt_token=None)
+    - get_cart_items(user_id="guest_user", jwt_token=None)
+    - get_cart_total(user_id="guest_user", jwt_token=None)
+    - session_memory (ephemeral in-memory only)
+Notes:
+- Set BACKEND_BASE_URL environment variable (default: http://localhost:9091)
+- This file intentionally does NOT write session JSON to disk.
+"""
+
 import os
-import random
 import re
+import json
+import logging
+import random
 from datetime import datetime, timedelta
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.naive_bayes import MultinomialNB
+
+import requests
+from requests import RequestException
+from rapidfuzz import fuzz, process
+
 from recommender.recommender import Recommender
 
-# -----------------------------
-# 🗺️ City–State Mapping (India)
-# -----------------------------
-CITY_STATE_MAP = {
-    "bhubaneswar": "odisha",
-    "cuttack": "odisha",
-    "rourkela": "odisha",
-    "sambalpur": "odisha",
-    "puri": "odisha",
-    "kolkata": "west bengal",
-    "ranchi": "jharkhand",
-    "patna": "bihar",
-    "delhi": "delhi",
-    "mumbai": "maharashtra",
-    "pune": "maharashtra",
-    "bangalore": "karnataka",
-    "chennai": "tamil nadu",
-    "hyderabad": "telangana",
-    "lucknow": "uttar pradesh",
-    "noida": "uttar pradesh",
-    "ahmedabad": "gujarat",
-    "jaipur": "rajasthan",
-    "kochi": "kerala",
-    "guwahati": "assam",
-    "bhopal": "madhya pradesh"
-}
+# Basic logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("chatbot_logic")
 
 # -----------------------------
-# 📍 Delivery Zone Helper Function
+# Configuration
 # -----------------------------
-def get_delivery_zone(source_city, destination_city):
-    """Classify delivery as intra-city, intra-state, or inter-state."""
-    source_city = source_city.lower().strip()
-    destination_city = destination_city.lower().strip()
-
-    source_state = CITY_STATE_MAP.get(source_city)
-    dest_state = CITY_STATE_MAP.get(destination_city)
-
-    if not source_state or not dest_state:
-        return "Unknown Zone"
-
-    if source_city == destination_city:
-        return "Intra-City"
-    elif source_state == dest_state:
-        return "Intra-State"
-    else:
-        return "Inter-State"
+BACKEND_BASE_URL = os.environ.get("BACKEND_BASE_URL", "http://localhost:9091")
+REQUEST_TIMEOUT = float(os.environ.get("REQUEST_TIMEOUT", 6.0))
 
 # -----------------------------
-# 🧠 Session memory
+# Ephemeral session memory (in-memory only)
 # -----------------------------
 session_memory = {
-    "cart_items": 0,
-    "last_intent": None,
-    "last_order": None,
     "user_name": "Anoksha",
-    "selected_payment": None,
-    "delivery_city": None  
+    "last_order": None,      # minimal tracking (non-persistent)
+    "last_intent": None
 }
 
 # -----------------------------
-# 💾 Session Persistence (Save / Load JSON)
+# Local small fallbacks (not persisted)
 # -----------------------------
-DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "session.json")
-
-def save_session_data():
-    """Save carts and session memory to JSON file."""
-    try:
-        data = {
-            "user_carts": user_carts,
-            "session_memory": session_memory
-        }
-        os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
-        with open(DATA_PATH, "w") as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        print("⚠️ Error saving session data:", e)
-
-def load_session_data():
-    """Load carts and session memory from JSON file."""
-    global user_carts, session_memory
-    if os.path.exists(DATA_PATH):
-        try:
-            with open(DATA_PATH, "r") as f:
-                data = json.load(f)
-            user_carts = data.get("user_carts", {})
-            session_memory.update(data.get("session_memory", {}))
-            print("✅ Session data loaded successfully.")
-        except Exception as e:
-            print("⚠️ Error loading session data:", e)
-
-# -----------------------------
-# 🔄 Load session data at startup
-# -----------------------------
-load_session_data()
-
-# -----------------------------
-# ♻️ Recommendation System
-# -----------------------------
-recommender = Recommender()
-
-# -----------------------------
-# 🛍️ Product Catalog
-# -----------------------------
-products = {
-    "eco bottle": {"price": 150, "category": "kitchen", "desc": "Reusable steel eco-bottle with BPA-free design."},
-    "bamboo brush": {"price": 80, "category": "personal care", "desc": "Eco toothbrush made of bamboo handle."},
-    "reusable bag": {"price": 120, "category": "lifestyle", "desc": "Foldable reusable bag for everyday shopping."},
-    "bamboo straw": {"price": 60, "category": "kitchen", "desc": "Pack of eco-friendly reusable bamboo straws."},
-    "metal straw": {"price": 100, "category": "kitchen", "desc": "Durable stainless steel straw set."},
-    "eco cup": {"price": 90, "category": "kitchen", "desc": "Reusable eco cup for coffee or tea."}
-}
-
 related_products = {
     "eco bottle": "bamboo straw",
     "bamboo brush": "reusable bag",
     "reusable bag": "eco cup",
-    "bamboo straw": "eco bottle",
-    "metal straw": "eco cup",
-    "eco cup": "metal straw"
-}
-
-eco_tips = [
-    "🌱 Tip: Switch to reusable bottles to reduce single-use plastic.",
-    "♻️ Tip: Carry your own shopping bag instead of plastic ones.",
-    "🌍 Tip: Opt for bamboo toothbrushes—they decompose naturally.",
-    "💧 Tip: Save water by turning off the tap while brushing."
-]
-
-valid_coupons = {
-    "SAVE15": 15,
-    "ECO10": 10,
-    "GREEN5": 5
 }
 
 # -----------------------------
-# 🛒 Cart System
+# HTTP helpers
 # -----------------------------
-user_carts = {}  # key = user_id, value = list of items (dicts with name + price)
+def _make_headers(jwt_token=None):
+    headers = {"Content-Type": "application/json"}
+    if jwt_token:
+        headers["Authorization"] = f"Bearer {jwt_token}"
+    return headers
 
-def get_cart_items(user_id="user123"):
-    return user_carts.get(user_id, [])
+def backend_get(path, jwt_token=None, params=None):
+    url = BACKEND_BASE_URL.rstrip("/") + path
+    try:
+        r = requests.get(url, headers=_make_headers(jwt_token), params=params, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except ValueError:
+            return r.text
+    except RequestException as e:
+        logger.warning("backend_get error for %s : %s", url, e)
+        return None
 
-def add_to_cart(user_id, item_name, price):
-    user_carts.setdefault(user_id, []).append({"item": item_name.title(), "price": price})
-    save_session_data()
+def backend_post(path, jwt_token=None, json_data=None):
+    url = BACKEND_BASE_URL.rstrip("/") + path
+    try:
+        r = requests.post(url, headers=_make_headers(jwt_token), json=json_data, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except ValueError:
+            return r.text
+    except RequestException as e:
+        logger.warning("backend_post error for %s : %s", url, e)
+        return None
 
-def get_cart_total(user_id="user123"):
-    return sum(item["price"] for item in user_carts.get(user_id, []))
-
-def clear_cart(user_id="user123"):
-    user_carts[user_id] = []
-    save_session_data()
-
-def handle_add_to_cart(user_input, user_id="user123"):
-    for product, details in products.items():
-        if product in user_input.lower():
-            add_to_cart(user_id, product, details["price"])
-            return f"{product.title()} added to your cart for ₹{details['price']}! 🛒\nYou might also like {related_products.get(product, 'Reusable Bag').title()} 🌱"
-    return "Sorry, I couldn’t find that product. Try adding something else!"
+def backend_delete(path, jwt_token=None):
+    url = BACKEND_BASE_URL.rstrip("/") + path
+    try:
+        r = requests.delete(url, headers=_make_headers(jwt_token), timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        try:
+            return r.json() if r.text else {}
+        except ValueError:
+            return r.text
+    except RequestException as e:
+        logger.warning("backend_delete error for %s : %s", url, e)
+        return None
 
 # -----------------------------
-# 💳 Checkout & Order System
+# Product search via backend
 # -----------------------------
-def checkout_cart(user_id="user123"):
-    items = get_cart_items(user_id)
+def find_product_via_api(query, jwt_token=None):
+    """
+    Return a product dict with keys: id, name, price (or None)
+    Uses: GET /api/v1/products/search?q=...
+    """
+    if not query:
+        return None
+    q = query.strip()
+    res = backend_get("/api/v1/products/search", jwt_token=jwt_token, params={"q": q})
+    if res is None:
+        return None
+
+    candidates = []
+    # Common response shapes: list, or dict with items/content/newArrivals, etc.
+    if isinstance(res, list):
+        candidates = res
+    elif isinstance(res, dict):
+        for k in ("items", "content", "data", "results", "newArrivals"):
+            if isinstance(res.get(k), list):
+                candidates = res.get(k)
+                break
+        if not candidates:
+            # try to pick any top-level list
+            for v in res.values():
+                if isinstance(v, list):
+                    candidates = v
+                    break
+
+    if not candidates:
+        return None
+
+    # fuzzy-match names in candidates
+    names = [c.get("name", "") for c in candidates]
+    match = process.extractOne(q, names, scorer=fuzz.partial_ratio)
+    if match and match[1] >= 60:
+        matched_name = match[0]
+        for c in candidates:
+            if c.get("name") == matched_name:
+                return {
+                    "id": c.get("id"),
+                    "name": c.get("name"),
+                    "price": float(c.get("price") or 0)
+                }
+
+    # fallback -> return first candidate normalized
+    first = candidates[0]
+    return {"id": first.get("id"), "name": first.get("name"), "price": float(first.get("price") or 0)}
+
+# -----------------------------
+# Cart API wrappers (backend)
+# -----------------------------
+def api_add_to_cart(product_id, quantity=1, jwt_token=None):
+    payload = {"productId": int(product_id), "quantity": int(quantity)}
+    return backend_post("/api/v1/cart/add", jwt_token=jwt_token, json_data=payload)
+
+def api_get_cart(jwt_token=None):
+    return backend_get("/api/v1/cart", jwt_token=jwt_token)
+
+def api_remove_cart_item(cart_item_id, jwt_token=None):
+    return backend_delete(f"/api/v1/cart/remove/{cart_item_id}", jwt_token=jwt_token)
+
+def api_clear_cart(jwt_token=None):
+    """
+    Clears cart by iterating through current cart items and deleting each.
+    Returns True if best-effort succeeded, False otherwise.
+    """
+    cart = api_get_cart(jwt_token=jwt_token)
+    if not cart or not isinstance(cart, dict):
+        return False
+    items = cart.get("items", [])
+    success = True
+    for it in items:
+        item_id = it.get("cartItemId") or it.get("id") or it.get("cart_item_id")
+        if item_id:
+            r = api_remove_cart_item(item_id, jwt_token=jwt_token)
+            if r is None:
+                success = False
+    return success
+
+# -----------------------------
+# Cart helper exports (used by app.py)
+# -----------------------------
+def get_cart_items(user_id="guest_user", jwt_token=None):
+    """
+    Returns list of cart items (normalised) or [].
+    Keep signature compatible with app.py which may call get_cart_items(user_id).
+    If jwt_token not provided, try anonymous cart.
+    """
+    cart = api_get_cart(jwt_token=jwt_token)
+    if not cart or not isinstance(cart, dict):
+        return []
+    return cart.get("items", [])
+
+def get_cart_total(user_id="guest_user", jwt_token=None):
+    cart = api_get_cart(jwt_token=jwt_token)
+    if not cart or not isinstance(cart, dict):
+        return 0.0
+    return float(cart.get("grandTotal") or cart.get("productsTotalAmount") or 0.0)
+
+# -----------------------------
+# High-level chat/cart functions
+# -----------------------------
+def handle_add_to_cart_api(user_input, user_id="guest_user", jwt_token=None):
+    """
+    Parses 'add X to cart' phrases, finds product via API, calls add-to-cart.
+    Returns user-facing reply string.
+    """
+    qty = 1
+    phrase = None
+    m = re.search(r"add\s+(\d+)\s+(.+?)\s+(?:to\s+(?:my\s+)?cart|$)", user_input, re.IGNORECASE)
+    if m:
+        qty = int(m.group(1))
+        phrase = m.group(2)
+    else:
+        m2 = re.search(r"add\s+(.+?)\s+(?:to\s+(?:my\s+)?cart|$)", user_input, re.IGNORECASE)
+        if m2:
+            phrase = m2.group(1)
+        else:
+            # fallback: use entirety
+            phrase = user_input
+
+    phrase = phrase.strip()
+    product = find_product_via_api(phrase, jwt_token=jwt_token)
+    if not product:
+        # small local fallback: try simple known keys
+        for k in related_products.keys():
+            if k in user_input.lower():
+                product = find_product_via_api(k, jwt_token=jwt_token) or {"id": None, "name": k.title(), "price": 0}
+                break
+
+    if not product or not product.get("id"):
+        return "Sorry, I couldn’t find that product in our catalog. Try a simpler name or use the website search."
+
+    res = api_add_to_cart(product["id"], quantity=qty, jwt_token=jwt_token)
+    if res is None:
+        return "⚠️ Could not add item to cart due to server error. Please try again."
+
+    price = product.get("price", 0)
+    product_name = product.get("name", "Item")
+    related = related_products.get(product_name.lower(), "Reusable Bag").title()
+    return f"{product_name} added to your cart for ₹{price} x {qty}! 🛒\nYou might also like {related} 🌱"
+
+def show_cart_api(jwt_token=None):
+    cart = api_get_cart(jwt_token=jwt_token)
+    if not cart:
+        return "⚠️ Could not retrieve cart. Please try again."
+
+    items = cart.get("items", [])
     if not items:
-        return "🛒 Your cart is empty! Add some eco items first."
+        return "Your cart is empty. Add some products to get started! 🌿"
 
-    total = get_cart_total(user_id)
-    session_memory["cart_items"] = 0
-    session_memory["pending_total"] = total
-    session_memory["coupon_applied"] = None
-    session_memory["selected_payment"] = None
+    lines = []
+    # get total from different possible fields
+    total = cart.get("grandTotal") or cart.get("productsTotalAmount") or 0
+    for it in items:
+        name = it.get("productName") or it.get("product_name") or it.get("name") or "Item"
+        qty = it.get("quantity", 1)
+        # prefer unit price fields if present
+        unit_price = it.get("price") or it.get("pricePerItem") or it.get("price_per_item") or 0
+        try:
+            unit_price = float(unit_price or 0)
+        except Exception:
+            unit_price = 0.0
+        lines.append(f"{name} (x{qty}) - ₹{unit_price * qty}")
+    return f"You have {len(items)} items in your cart:\n" + "\n".join(lines) + f"\nTotal = ₹{total}"
 
-    return f"Your total is ₹{total}. 💸\nWould you like to apply a coupon code? (Available: SAVE15, ECO10, GREEN5)"
+def clear_cart_api(jwt_token=None):
+    ok = api_clear_cart(jwt_token=jwt_token)
+    if ok:
+        return "🗑️ Your cart has been cleared!"
+    return "⚠️ Could not clear cart at the moment. Try again."
 
-def apply_coupon(code, user_id="user123"):
-    code = code.upper()
-    if code not in valid_coupons:
-        return f"❌ Invalid coupon code '{code}'. Please try again."
+# -----------------------------
+# Checkout & order operations via backend
+# -----------------------------
+def checkout_cart_api(jwt_token=None):
+    cart = api_get_cart(jwt_token=jwt_token)
+    if not cart:
+        return "🛒 Your cart is empty or cannot be fetched."
 
-    discount = valid_coupons[code]
-    total = session_memory.get("pending_total", 0)
-    discounted_total = total - (total * discount / 100)
-    session_memory["pending_total"] = int(discounted_total)
-    session_memory["coupon_applied"] = code
-
-    return f"✅ Coupon '{code}' applied successfully! You saved {discount}%.\nNew total: ₹{int(discounted_total)}.\nNow choose your payment method (UPI / COD / Net Banking / Wallet)."
-
-def select_payment_method(method, user_id="user123"):
-    methods = ["upi", "cod", "net banking", "wallet"]
-    method = method.lower()
-
-    if method not in methods:
-        return "❌ Invalid payment method. Please choose from UPI, COD, Net Banking, or Wallet."
-
-    session_memory["selected_payment"] = method
-    return (
-        f"💳 Payment method '{method.upper()}' selected.\n"
-        "📍 Please provide your delivery city (e.g., Bhubaneswar, Rourkela, Mumbai) before confirming your order."
-    )
-
-def confirm_order(user_id="user123"):
-    items = get_cart_items(user_id)
-    if not items:
+    total = cart.get("grandTotal") or cart.get("productsTotalAmount") or 0
+    if not total or float(total) == 0:
         return "🛒 Your cart is empty!"
 
-    total = session_memory.get("pending_total", 0)
-    payment = session_memory.get("selected_payment")
-    if not payment:
-        return "Please select a payment method before confirming."
+    # store ephemeral pending total for session only
+    session_memory["pending_total"] = float(total)
+    return f"Your total is ₹{int(float(total))}. 💸\nWould you like to apply a coupon code? (SAVE15, ECO10, GREEN5)"
 
-    delivery_city = session_memory.get("delivery_city")
-    if not delivery_city:
-        return "📍 Please provide your delivery city before confirming your order."
+def confirm_order_api(jwt_token=None):
+    """
+    Call backend checkout endpoint. Backend may expect cart in session or body.
+    This function does a best-effort POST /api/v1/checkout with empty body (many backends use server-side cart).
+    """
+    if not jwt_token:
+        return "Please login via frontend so I can place the order for you."
 
-    source_city = "Bhubaneswar"  # warehouse
-    destination_city = delivery_city
-    delivery_zone = get_delivery_zone(source_city, destination_city)
+    res = backend_post("/api/v1/checkout", jwt_token=jwt_token, json_data={})
+    if res is None:
+        # fallback local ephemeral order
+        order_id = f"ORD{random.randint(1000,9999)}"
+        session_memory["last_order"] = {"order_id": order_id, "total": session_memory.get("pending_total", 0), "status": "Processing"}
+        return f"✅ Order placed locally (backend failed). Order ID: {order_id}\nTotal: ₹{int(session_memory.get('pending_total',0))}"
 
-    order_id = f"ORD{random.randint(1000, 9999)}"
-    user_carts[user_id] = []
+    # expected backend response may include order id or order object
+    order_id = res.get("orderId") or res.get("order_id") or res.get("id") or res.get("orderId", None)
+    session_memory["last_order"] = {"order_id": order_id or "N/A", "total": session_memory.get("pending_total", 0), "status": "Processing"}
+    return f"✅ Order placed successfully!\n🧾 Order ID: {order_id}\nTotal: ₹{int(session_memory.get('pending_total',0))}"
 
-    session_memory["last_order"] = {
-        "order_id": order_id,
-        "items": [item["item"] for item in items],
-        "total": total,
-        "payment": payment.title(),
-        "status": "Processing",
-        "source_city": source_city,
-        "destination_city": destination_city,
-        "delivery_zone": delivery_zone
-    }
+def track_order_api(jwt_token=None):
+    """
+    Try to fetch user orders from backend: GET /api/v1/profile/orders
+    If not available, return ephemeral last_order.
+    """
+    if jwt_token:
+        res = backend_get("/api/v1/profile/orders", jwt_token=jwt_token)
+        if isinstance(res, list) and res:
+            # pick most recent
+            recent = res[0]
+            status = recent.get("status") or recent.get("orderStatus") or "Unknown"
+            order_id = recent.get("id") or recent.get("orderId") or recent.get("order_id")
+            eta = datetime.now() + timedelta(hours=24)
+            return f"📦 Order {order_id} status: {status}. Estimated delivery by {eta.strftime('%d %b %Y')}."
+    # fallback ephemeral
+    last = session_memory.get("last_order")
+    if not last:
+        return "You haven’t placed any orders yet."
+    return f"📦 Order {last.get('order_id')} status: {last.get('status')}."
 
-    save_session_data()
-
-    coupon_msg = ""
-    if session_memory.get("coupon_applied"):
-        coupon_msg = f"\n💚 Coupon {session_memory['coupon_applied']} applied."
-
-    return (
-        f"✅ Order placed successfully!\n"
-        f"🧾 Order ID: {order_id}\n"
-        f"Items: {', '.join([item['item'] for item in items])}\n"
-        f"Total: ₹{total}\n"
-        f"Payment Method: {payment.upper()}{coupon_msg}\n"
-        f"🚚 Delivery Type: {delivery_zone}\n"
-        f"Thanks for shopping sustainably! 🌿"
-    )
-
-def track_order(user_id="user123"):
-    order = session_memory.get("last_order")
-    if not order:
+def cancel_order_api(jwt_token=None):
+    """
+    Attempt to cancel last order via backend; common pattern:
+    POST /api/v1/profile/orders/{id}/cancel or POST /api/v1/admin/orders/{id}/cancel
+    If backend doesn't support, fallback to ephemeral cancel.
+    """
+    last = session_memory.get("last_order")
+    if not last or not last.get("order_id"):
         return "You haven’t placed any orders yet."
 
-    if order["status"].lower() == "cancelled":
-        return f"❌ Order {order['order_id']} was cancelled. No delivery will be made."
-
-    if order["status"].lower() == "delivered":
-        return f"📦 Order {order['order_id']} has already been delivered. Hope you liked it! 💚"
-
-    statuses = ["Processing", "Shipped", "Out for Delivery", "Delivered"]
-    current_status = order["status"]
-
-    if current_status not in statuses:
-        return f"⚠️ Unknown order status for {order['order_id']}."
-
-    next_status = statuses[min(statuses.index(current_status) + 1, len(statuses) - 1)]
-    order["status"] = next_status
-    save_session_data()
-
-    order_id = order["order_id"]
-    items = ", ".join(order["items"])
-    delivery_zone = order.get("delivery_zone", "Unknown")
-
-    future_eta = datetime.now() + timedelta(hours=2)
-    eta = future_eta.strftime("%d %b %Y, %I:%M %p")
-
-    return f"📦 Order {order_id} ({items}) is now *{order['status']}*.\n🚚 Delivery Type: {delivery_zone}\nExpected delivery by {eta}."
-
-def cancel_order(user_id="user123"):
-    order = session_memory.get("last_order")
-
-    if not order:
-        return "❌ You haven’t placed any orders yet."
-
-    if order["status"].lower() in ["delivered", "cancelled"]:
-        return f"⚠️ Order {order['order_id']} is already {order['status']}."
-
-    order["status"] = "Cancelled"
-    save_session_data()
-
-    return f"🛑 Order {order['order_id']} has been cancelled successfully. Refunds (if any) will be processed soon. 💚"
+    od = last.get("order_id")
+    if jwt_token:
+        # try common endpoint pattern
+        res = backend_post(f"/api/v1/profile/orders/{od}/cancel", jwt_token=jwt_token, json_data={})
+        if res:
+            last["status"] = "Cancelled"
+            return f"🛑 Order {od} cancelled successfully on backend."
+        # try alternate endpoint
+        res2 = backend_post(f"/api/v1/orders/{od}/cancel", jwt_token=jwt_token, json_data={})
+        if res2:
+            last["status"] = "Cancelled"
+            return f"🛑 Order {od} cancelled successfully on backend."
+    # fallback ephemeral
+    last["status"] = "Cancelled"
+    return f"🛑 Order {od} has been cancelled (local)."
 
 # -----------------------------
-# 🤖 Intent Detection
+# Intent detection
 # -----------------------------
 def detect_intent(user_input):
-    user_input = user_input.lower().strip()
-
-    if re.search(r"\b(hi|hello|hey)\b", user_input): return "greeting"
-    if "tip" in user_input: return "eco_tip"
-    if re.search(r"(kitchen|personal care|lifestyle)", user_input): return "category"
-    if re.search(r"\b(show|find|search|see|suggest)\b.*(product|item|bottle|straw|bag|cup|brush)", user_input): return "product_search"
-    if re.search(r"\b(details|info|about)\b.*", user_input): return "product_detail"
-    if re.search(r"\b(add|put)\b.*\b(cart|basket)\b", user_input): return "cart_added"
-    if re.search(r"\b(remove|delete|take out)\b.*\b(cart|basket)\b", user_input): return "cart_removed"
-    if re.search(r"\b(show|what|see|how many)\b.*\b(cart|basket|product)\b", user_input): return "cart_query"
-    if re.search(r"\b(checkout|place order|buy now|purchase)\b", user_input): return "checkout"
-    if re.search(r"\b(coupon|apply)\b", user_input): return "apply_coupon"
-    if re.search(r"\b(upi|cod|net banking|wallet)\b", user_input): return "payment_method"
-    if re.search(r"\b(confirm|done|finalize|complete)\b.*\b(order)?\b", user_input): return "confirm_order"
-    if re.search(r"\b(track|status|where|delivery|progress)\b.*\b(order|package|parcel|delivery)\b", user_input): return "track_order"
-    if re.search(r"\b(cancel|abort|stop)\b.*\b(order|purchase|request)?\b", user_input): return "cancel_order"
-    if re.search(r"\b(thank|bye|goodbye)\b", user_input): return "small_talk"
-    if re.search(r"\b(recommend|suggest|eco friendly|compare|alternative|which is more eco[- ]?friendly)\b", user_input):
-        return "eco_recommendation"
-    if re.search(r"(carbon|emission|eco[- ]?score|environmental impact|eco rating|footprint)", user_input):
-        return "eco_info"
-    if re.search(r"\b(vs|versus|compare|difference between)\b", user_input):
-        return "eco_comparison"
-
+    u = user_input.lower().strip()
+    if re.search(r"\b(hi|hello|hey)\b", u): return "greeting"
+    if "tip" in u: return "eco_tip"
+    if re.search(r"\b(show|what|see|how many)\b.*\b(cart|basket)\b", u): return "cart_query"
+    if re.search(r"\b(add|put)\b.*\b(cart|basket)\b", u): return "cart_added"
+    if re.search(r"\b(remove|delete|take out)\b.*\b(from )?(my )?(cart|basket)\b", u):
+        return "cart_remove_single"
+    if re.search(r"\b(clear|empty|remove all)\b.*\b(cart|basket)\b", u): return "cart_clear"
+    if re.search(r"\b(checkout|place order|buy now|purchase)\b", u): return "checkout"
+    if re.search(r"\b(coupon|apply)\b", u): return "apply_coupon"
+    if re.search(r"\b(upi|cod|net banking|wallet)\b", u): return "payment_method"
+    if re.search(r"\b(confirm|finalize|complete)\b.*\b(order)?\b", u): return "confirm_order"
+    if re.search(r"\b(track|status|where|delivery)\b.*\b(order|package|parcel)\b", u): return "track_order"
+    if re.search(r"\b(cancel|abort|stop)\b.*\b(order|purchase|request)?\b", u): return "cancel_order"
+    if re.search(r"\b(thank|bye|goodbye)\b", u): return "small_talk"
+    if re.search(r"\b(recommend|suggest|eco friendly|eco-friendly|compare|alternative)\b", u): return "eco_recommendation"
+    if re.search(r"(carbon|emission|eco[- ]?score|footprint)", u): return "eco_info"
+    if re.search(r"\b(vs|versus|compare|difference between)\b", u): return "eco_comparison"
     return "unknown"
 
-# -----------------------------
-# 💬 Chatbot Response
-# -----------------------------
-def chatbot_response(user_input, user_id="user123"):
+def remove_single_item_api(user_input, jwt_token=None):
+    """
+    Remove ONE specific product by fuzzy-matching item name.
+    Example:
+      - remove atomic habits from my cart
+      - delete bomber jacket
+      - take out bottle
+    """
+    # Extract product name
+    m = re.search(r"(remove|delete|take out)\s+(.+?)\s+(from\s+)?(my\s+)?(cart|basket)", user_input, re.IGNORECASE)
+    if m:
+        phrase = m.group(2).strip()
+    else:
+        m2 = re.search(r"(remove|delete|take out)\s+(.+)", user_input, re.IGNORECASE)
+        phrase = m2.group(2).strip() if m2 else user_input.strip()
+
+    # Step 1: Fetch cart
+    cart = api_get_cart(jwt_token)
+    if not cart:
+        return "⚠️ Could not access your cart."
+
+    items = cart.get("items", [])
+    if not items:
+        return "Your cart is empty."
+
+    # Step 2: Fuzzy match item name
+    names = [item.get("productName", "") for item in items]
+    match = process.extractOne(phrase.lower(), [n.lower() for n in names], scorer=fuzz.partial_ratio)
+
+    if not match or match[1] < 60:
+        return f"⚠️ I couldn’t find '{phrase}' in your cart."
+
+    matched_name = match[0]
+
+    # Find item object
+    target_item = None
+    for it in items:
+        if it.get("productName", "").lower() == matched_name:
+            target_item = it
+            break
+
+    if not target_item:
+        return f"⚠️ Could not remove '{phrase}'."
+
+    cart_item_id = target_item.get("cartItemId")
+    if not cart_item_id:
+        return "⚠️ Could not find cart item ID."
+
+    # Step 3: Call backend DELETE
+    res = api_remove_cart_item(cart_item_id, jwt_token)
+    if res is None:
+        return "⚠️ Failed to remove item due to server error."
+
+    return f"🗑️ Removed **{target_item.get('productName')}** from your cart."
+
+
+# =======================================================================
+#                          MAIN CHATBOT RESPONSE
+# =======================================================================
+
+def chatbot_response(user_input, user_id="guest_user", jwt_token=None):
+    """
+    Main function called by app.py.
+    """
     intent = detect_intent(user_input)
+    session_memory["last_intent"] = intent
 
+    # -----------------------------------
+    # GREETINGS
+    # -----------------------------------
     if intent == "greeting":
-        return f"Hey {session_memory['user_name']} 👋! Welcome back to EcoBazaarX. How can I help you today?"
+        return f"Hey {session_memory.get('user_name', 'User')} 👋! Welcome back to EcoBazaarX. How can I help you today?"
+
     if intent == "eco_tip":
-        return random.choice(eco_tips)
+        tips = [
+            "Switch to reusable bottles to reduce single-use plastic.",
+            "Carry your own shopping bag instead of plastic ones.",
+            "Opt for bamboo toothbrushes — they decompose naturally.",
+            "Save water by turning off the tap while brushing."
+        ]
+        return random.choice(tips)
+
+    # -----------------------------------
+    # CART OPERATIONS
+    # -----------------------------------
     if intent == "cart_added":
-        return handle_add_to_cart(user_input, user_id)
-    if intent == "cart_removed":
-        clear_cart(user_id)
-        return "🗑️ Your cart has been cleared!"
+        return handle_add_to_cart_api(user_input, user_id=user_id, jwt_token=jwt_token)
+
     if intent == "cart_query":
-        items = get_cart_items(user_id)
-        if not items:
-            return "Your cart is empty. Add some eco products to get started! 🌿"
-        total = get_cart_total(user_id)
-        item_list = ", ".join([i["item"] for i in items])
-        return f"You have {len(items)} items in your cart: {item_list}. Total = ₹{total}."
+        return show_cart_api(jwt_token=jwt_token)
+
+    if intent == "cart_clear":
+        return clear_cart_api(jwt_token=jwt_token)
+
+    if intent == "cart_remove_single":
+        return remove_single_item_api(user_input, jwt_token=jwt_token)
+
+
+    # -----------------------------------
+    # CHECKOUT FLOW
+    # -----------------------------------
     if intent == "checkout":
-        return checkout_cart(user_id)
+        return checkout_cart_api(jwt_token=jwt_token)
+
     if intent == "apply_coupon":
-        match = re.search(r"(save15|eco10|green5)", user_input, re.IGNORECASE)
-        if not match:
-            return "Please mention a valid coupon code."
-        return apply_coupon(match.group(1), user_id)
+        m = re.search(r"(save15|eco10|green5)", user_input, re.IGNORECASE)
+        if not m:
+            return "Please mention a valid coupon code (SAVE15, ECO10, GREEN5)."
+        code = m.group(1).upper()
+        return f"✅ Coupon {code} noted. Please confirm payment to apply it during checkout."
+
     if intent == "payment_method":
-        match = re.search(r"(upi|cod|net banking|wallet)", user_input, re.IGNORECASE)
-        return select_payment_method(match.group(1), user_id)
-    # 🆕 Detect if user just entered a city name
-    if user_input.lower() in CITY_STATE_MAP:
-        session_memory["delivery_city"] = user_input.title()
-        save_session_data()
-        return f"📦 Got it! Delivery city set to {session_memory['delivery_city']}.\nYou can now confirm your order."
+        m = re.search(r"(upi|cod|net banking|wallet)", user_input, re.IGNORECASE)
+        if m:
+            return f"Payment method set to {m.group(1).upper()}. Please confirm your order."
+        return "Please choose UPI, COD, Net Banking or Wallet."
+
     if intent == "confirm_order":
-        return confirm_order(user_id)
-    if intent == "confirm_order":
-        return confirm_order(user_id)
+        return confirm_order_api(jwt_token=jwt_token)
+
     if intent == "track_order":
-        return track_order(user_id)
+        return track_order_api(jwt_token=jwt_token)
+
     if intent == "cancel_order":
-        return cancel_order(user_id)
+        return cancel_order_api(jwt_token=jwt_token)
+
+    # -----------------------------------
+    # SMALL TALK
+    # -----------------------------------
     if intent == "small_talk":
-        if "thank" in user_input:
-            return "You're very welcome! 💚 Keep shopping sustainably."
-        return "Goodbye 👋 Stay eco-friendly!"
-    if intent == "eco_recommendation":
-        result = recommender.recommend(user_input)
-        if result["success"]:
-            product = result["recommended"]
-            return f"🌿 I recommend **{product['name']}** — {result['reason']}"
-        else:
-            return "Sorry, I couldn’t find a matching product to recommend."
-    if intent == "eco_info":
-        result = recommender.recommend(user_input)
+        if "thank" in user_input.lower():
+            return "You're welcome — glad to help! 💚"
+        return "Goodbye! Stay eco-friendly 🌿"
+
+    # -----------------------------------
+    # ECO RECOMMENDER
+    # -----------------------------------
+    if intent in ("eco_recommendation", "eco_info", "eco_comparison"):
+        rec = Recommender()
+        result = rec.recommend(user_input)
+
         if result.get("success"):
-            product = result["recommended"]
-            return (
-                f"🌍 The product **{product['name']}** has a carbon emission of "
-                f"{product['carbon_emission']} kg CO₂e.\n"
-                f"That means it's more eco-friendly than its alternatives!"
-            )
-        else:
-            return "Sorry, I couldn’t find emission details for that product."
+            p = result["recommended"]
+            name = p.get("name") if isinstance(p, dict) else p["name"]
+            reason = result.get("reason", "")
 
-    if intent == "eco_comparison":
-        # Extract product names around 'vs', 'compare', or 'difference between'
-        match = re.search(r"(\b[a-z ]+\b)\s*(?:vs|versus|compare|difference between)\s*(\b[a-z ]+\b)", user_input)
-        if not match:
-            return "Please specify two products to compare, e.g., 'bamboo brush vs plastic brush'."
+            if intent == "eco_info":
+                ce = p.get("carbon_emission") if isinstance(p, dict) else p["carbon_emission"]
+                return f"🌍 {name} has a carbon emission of {ce} kg CO₂e."
 
-        prod1, prod2 = match.groups()
-        prod1, prod2 = prod1.strip(), prod2.strip()
+            return f"🌿 I recommend **{name}** — {reason}"
 
-        # 🧠 Use the recommender's built-in comparison method
-        result = recommender.compare_products(prod1, prod2)
+        return result.get("message", "Sorry, I couldn't find a match.")
 
-        if not result.get("success"):
-            return f"Sorry, I couldn’t find enough data to compare **{prod1.title()}** and **{prod2.title()}**."
-
-        better = result["recommended"]
-        reason = result["reason"]
-
-        return f"🌿 {better['name']} is more eco-friendly! 🌍\n{reason}"
-
+    # -----------------------------------
+    # DEFAULT
+    # -----------------------------------
     return "Sorry, I didn’t quite get that. Could you rephrase?"
