@@ -1,98 +1,91 @@
-EcoBazaar X – Chatbot & Recommendation System (Python + Flask + Backend API Integration)
+EcoBazaarX – Chatbot Microservice
+
+Python + Flask + Full Backend API Integration + NLP/Intent Engine + Recommendation System
+
 Overview
+The EcoBazaarX Chatbot is a fully API-driven conversational microservice built with Python, Flask, and a rule-based NLP engine.
+It integrates tightly with the EcoBazaarX Spring Boot Backend (http://localhost:9091) and provides natural-language control over core e-commerce flows.
 
-The EcoBazaar X Chatbot is a fully API-driven conversational assistant built using Python, Flask, and a lightweight NLP + fuzzy-matching system.
-It connects directly with the EcoBazaar X Spring Boot Backend (http://localhost:9091) to perform real e-commerce operations such as:
+The chatbot performs real backend operations such as:
 
-Cart operations (add, remove, show, clear)
-Checkout and order creation
-Order tracking & cancellation
-Product search via backend
-Eco-friendly recommendations
-Fuzzy matching for user-friendly interaction
+Core Functionalities
+Add / remove items to cart (via fuzzy matching)
+Show cart, clear cart
+Checkout & apply coupons
+Confirm order
+Track order status
+Cancel order
+Search products via backend API
+Eco-friendly product recommendations
+Compare eco-impact of items
+JWT-authenticated operations
+Fully reactive intention engine
 
-This service functions as an independent microservice and will integrate into the React front-end as a chatbot widget.
+New Chatbot V2 Features (2025 Release)
+Eco Rank Inquiry (uses /api/v1/profile/me)
+Carbon Impact Inquiry (uses /api/v1/insights/profile)
+Eco Education Intents
+(“What is carbon footprint?”, “How is emission calculated?”)
+Budget Recommendations Under ₹500
+Improved fuzzy matching + fallback search
+Consistent JSON responses for frontend integration
+This chatbot runs as an independent microservice and plugs directly into the React frontend widget.
 
 Technology Stack
-
-Core Technologies:
+Chatbot Microservice
 Python 3.10+
-Flask — REST microservice framework
-Flask-CORS — Enables cross-origin requests (Frontend → Chatbot API)
-Requests — For calling backend REST APIs (Spring Boot)
-RapidFuzz — Fuzzy matching for NLP-based item detection
-Pandas — Used in the recommendation engine (eco-product similarity model)
+Flask (REST API)
+Flask-CORS
+Requests (Backend API Caller)
+RapidFuzz (Fuzzy Matching)
+Pandas (Recommender Engine)
+Custom NLP + Intent Engine
 
-Chatbot Microservice:
-A fully API-driven Python Flask service that:
-Detects user intent
-Calls backend microservices
-Performs cart operations (add, show, remove, clear)
-Handles checkout, order tracking, cancellation
-Provides eco-friendly recommendations
+Interconnected System
+Spring Boot Backend (Main APIs)
+React Frontend (Chat UI widget)
+Python Microservice (Chat Engine)
 
-Recommendation System:
-Lightweight similarity engine (using Pandas)
-Works on product dataset (CSV)
-Provides:
-Eco-friendly alternatives
-Product comparisons
-Carbon footprint insights
-Interconnected Architecture
-
-Chatbot microservice works as a bridge between:
-
-Spring Boot Backend (http://localhost:9091)
-Handles real business logic:
-Auth (JWT)
-Products
-Cart
-Checkout
-Orders
-
-React Frontend
-Displays the chatbot UI
-Sends user messages + JWT token
-Renders chatbot replies
-
-Folder Structure
+Project Structure
 EcoChatBot/
 ├── app.py                        # Flask server entry point
 ├── chatbot_logic.py              # Core chatbot engine (+ intents + API integration)
 ├── requirements.txt              # Python dependencies
 │
-├── backend_client/               # Backend API layer
-│   └── api_client.py
+├── backend_client/
+│   └── api_client.py             # (optional abstraction layer)
 │
-├── recommender/                  # Eco-friendly recommendation system
+├── recommender/
 │   ├── recommender.py
-│   └── products.csv (optional)
+│   └── products.csv              # dataset (optional)
 │
-├── data/                         # ML or helper dataset storage
-│   └── products.csv (if needed)
+├── data/
+│   └── products.csv              # example ML dataset
 │
-└── README.md                     # Project documentation
+└── README.md
 
-Backend API Endpoints Connected by Chatbot
-
-Public Endpoints
-GET /api/v1/products/search
+Backend Endpoints Used by Chatbot
+Public
+GET /api/v1/products
+GET /api/v1/products/search?q=...
 GET /api/v1/products/{id}
 POST /api/v1/auth/login
-Customer Endpoints
+
+Customer (Requires JWT)
 GET /api/v1/cart
 POST /api/v1/cart/add
 DELETE /api/v1/cart/remove/{id}
 POST /api/v1/checkout
 GET /api/v1/profile/orders
 POST /api/v1/profile/orders/{id}/cancel
-The chatbot relies entirely on backend APIs—no local DB or file storage.
+GET /api/v1/profile/me (Eco Rank)
+GET /api/v1/insights/profile (Carbon Impact)
+The chatbot does not use any local database — all data is synced with backend.
 
 Key Features
-1. Authentication & JWT Handling
-JWT passed from frontend → chatbot → backend
-Chatbot does NOT handle login UI
-Frontend sends:
+1. JWT Authentication
+The frontend sends JWT with each request:
+
 {
   "message": "show my cart",
   "user_id": "customer1",
@@ -100,68 +93,117 @@ Frontend sends:
 }
 
 2. Intelligent Cart System
-Add items by name or fuzzy names
-Remove specific items via fuzzy matching
-View cart summary
-Auto-suggest related products
-Clear entire cart
+Add items by name:
+"add bamboo bottle to my cart"
+Fuzzy matching for user misspellings
+"add bambu botel"
+Remove specific items
+View full cart summary
+Auto-suggest related items
+Clear cart in one command
 
 3. Order Management
 Checkout
-Apply coupon (mocked)
-Confirm order
-Track latest order
-Cancel order
+Apply coupons (simulated)
+Confirm orders
+Track delivery
+Cancel orders
 
-4. NLP + Intent Detection
-Recognizes 20+ natural-language patterns:
-“add book to cart”
-“show my cart”
-“checkout”
-“cancel my order”
-“recommend eco-friendly products”
+4. Advanced Intent Detection
+Supports 30+ natural phrasing patterns:
+"add 2 books to cart"
+"show basket"
+"checkout"
+"cancel my order"
+"suggest eco-friendly alternatives"
+"product under 500"
+"what is carbon footprint"
 
 5. Eco Recommendation Engine
-A CSV-powered recommender supporting:
-Similar product recommendations
-Carbon emission insights
-Comparison queries
+CSV-based similarity matching
+Uses carbon footprint comparison
+Supports comparison queries
+Eco-friendly alternatives
+Budget filtering
 
-Running the Application:
-Step 1 — Install dependencies
+6. New Eco Intelligence
+Eco Rank → “What is my eco rank?”
+Carbon Saved → “How much carbon have I saved?”
+Eco Education
+“What is carbon footprint?”
+“How is emission calculated?”
+
+Installing & Running the Chatbot
+Step 1 — Install Dependencies
 pip install -r requirements.txt
 
-Step 2 — Set backend base URL
+Step 2 — Set Backend URL
+PowerShell:
 $env:BACKEND_BASE_URL="http://localhost:9091"
 
-Step 3 — Start chatbot
+or Linux/macOS:
+export BACKEND_BASE_URL=http://localhost:9091
+
+Step 3 — Start Chatbot
 python app.py
 
+Chatbot endpoint:
+POST http://127.0.0.1:5000/chat
 
-Chatbot server runs at:
-http://127.0.0.1:5000/chat
-
-Chatbot API Usage
-Endpoint:
+Usage (Frontend or Postman)
+Request
 POST /chat
-
-Request Body Example
 {
   "message": "add atomic habits to my cart",
   "user_id": "customer1",
-  "jwt": "<YOUR_JWT>"
+  "jwt": "<JWT>"
 }
 
-Response Example
+Response
 {
-  "reply": "Atomic Habits added to your cart for ₹499 x 1! You might also like Reusable Bag 🌱",
+  "reply": "Atomic Habits added to your cart for ₹499 x 1! 🛒 You might also like Reusable Bag 🌱",
   "status": "success"
 }
 
-Recommender System — ML-lite product matching
+Supported Chatbot Commands
+1. Cart
+“add atomic habits to my cart”
+“show my cart”
+“remove bottle from cart”
+“clear my cart”
 
-JWT Authentication
+2. Orders
+“checkout”
+“apply SAVE15”
+“confirm order”
+“track my order”
+“cancel order”
 
-Spring Boot (Backend)
+3. Eco Features
+“what is my eco rank”
+“how much carbon have I saved”
+“what is carbon footprint”
+“how is emission calculated”
 
-React (Frontend)
+4. Recommendations
+“recommend an eco friendly bottle”
+“compare bamboo vs plastic bottle”
+“suggest something under 500”
+
+Chatbot API (Flask)
+Endpoint
+POST /chat
+
+JSON Contract
+Required fields:
+message
+optional: jwt, user_id
+
+Developers & Maintenance
+Built as a microservice for EcoBazaarX
+Easy to extend (intents & handlers modularized)
+Fully compatible with React frontend integration
+All shopping logic executed via backend APIs
+
+License
+Internal project — EcoBazaarX (2025)
